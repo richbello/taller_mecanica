@@ -77,7 +77,6 @@ def calcular_totales(repuestos, servicio):
     total = subtotal + iva
     return subtotal, iva, total, precio_servicio
 
-
 def exportar_excel(ordenes):
     carpeta = os.path.dirname(OUTPUT_FILE)
     if carpeta and not os.path.exists(carpeta):
@@ -131,7 +130,7 @@ class OrdenesTallerApp:
 
         self._estilos()
         self._layout()
-        self.update_totales()  # mostrar valores initiales
+        self.update_totales()  # mostrar valores iniciales
 
     def _estilos(self):
         style = ttk.Style()
@@ -216,8 +215,13 @@ class OrdenesTallerApp:
 
         ttk.Button(left, text="Agregar repuesto", command=self.agregar_repuesto).grid(row=11, column=1, pady=5)
 
-        self.rep_list = tk.Listbox(left, height=5)
-        self.rep_list.grid(row=12, column=0, columnspan=2, padx=5, pady=3)
+        # --- Visualización compacta de repuestos (sin cuadro grande) ---
+        self.rep_display_var = tk.StringVar(value="")
+        self.rep_display_label = tk.Label(left, textvariable=self.rep_display_var,
+                                          bg="#1e293b", fg="#e2e8f0", justify="left", anchor="w",
+                                          wraplength=220)
+        self.rep_display_label.grid(row=12, column=0, columnspan=2, padx=5, pady=(3,10), sticky="w")
+        # ---------------------------------------------------------------
 
         # Montos visibles
         ttk.Label(left, text="Subtotal").grid(row=13, column=0, sticky="w", padx=5)
@@ -265,18 +269,15 @@ class OrdenesTallerApp:
         rep = next((r for r in REPUESTOS if r["nombre"] == nombre), None)
         if rep:
             self.repuestos_seleccionados.append(rep)
-            self.rep_list.insert(tk.END, f'{rep["nombre"]} - {format_currency(rep["precio"])}')
+            self._actualizar_rep_display()
             self.update_totales()
 
-    def quitar_repuesto_seleccionado(self):
-        sel = self.rep_list.curselection()
-        if not sel:
-            messagebox.showwarning("Atención", "Seleccione un repuesto para quitar")
-            return
-        idx = sel[0]
-        self.rep_list.delete(idx)
-        self.repuestos_seleccionados.pop(idx)
-        self.update_totales()
+    def _actualizar_rep_display(self):
+        if not self.repuestos_seleccionados:
+            self.rep_display_var.set("")  # sin cuadro blanco grande
+        else:
+            lines = [f'{r["nombre"]} - {format_currency(r["precio"])}' for r in self.repuestos_seleccionados]
+            self.rep_display_var.set("\n".join(lines))
 
     def update_totales(self):
         subtotal, iva, total, precio_servicio = calcular_totales(self.repuestos_seleccionados, self.servicio.get())
@@ -332,7 +333,7 @@ class OrdenesTallerApp:
     def limpiar(self):
         # Mantiene esta función si la usas en otro contexto (borra repuestos y diagnóstico)
         self.repuestos_seleccionados = []
-        self.rep_list.delete(0, tk.END)
+        self._actualizar_rep_display()
         self.diagnostico.delete("1.0", "end")
         self.update_totales()
 
@@ -385,9 +386,7 @@ class OrdenesTallerApp:
         self.diagnostico.insert("1.0", orden.get("diagnostico", ""))
         self.repuestos_seleccionados = orden.get("repuestos", []).copy()
 
-        self.rep_list.delete(0, tk.END)
-        for r in self.repuestos_seleccionados:
-            self.rep_list.insert(tk.END, f'{r["nombre"]} - {format_currency(r["precio"])}')
+        self._actualizar_rep_display()
 
         # No eliminar la orden; marcamos el índice para que al guardar se reemplace
         self.edit_index = index
@@ -417,7 +416,7 @@ class OrdenesTallerApp:
         self.estado.set(ESTADOS[0])
         self.diagnostico.delete("1.0", "end")
         self.repuestos_seleccionados = []
-        self.rep_list.delete(0, tk.END)
+        self._actualizar_rep_display()
         self.edit_index = None
         self.update_totales()
 
