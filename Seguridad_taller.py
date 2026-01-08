@@ -1,7 +1,6 @@
 import os
 import json
 from datetime import datetime
-import base64
 import secrets
 import string
 
@@ -10,7 +9,6 @@ from tkinter import ttk, messagebox, filedialog
 
 from cryptography.fernet import Fernet
 import pandas as pd
-from openpyxl import Workbook
 
 BASE_DIR = r"C:\RICHARD\RB\2025\Taller_mecánica"
 KEY_FILE = os.path.join(BASE_DIR, "security.key")
@@ -105,7 +103,6 @@ def load_creds():
         arr = json.loads(data.decode("utf-8"))
         return arr
     except Exception as e:
-        # If decryption fails, return [] and log
         audit("load_creds_failed", str(e))
         return []
 
@@ -134,7 +131,7 @@ class SeguridadTaller:
     def _setup_styles(self):
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure("Menu.TButton", background="#f59e0b", foreground="#111827", font=("Segoe UI Semibold", 11))
+        style.configure("Menu.TButton", background="#f59e0b", foreground="#111827", font=("Segoe UI Semibold", 11), padding=6)
         style.map("Menu.TButton", background=[("active", "#fbbf24")])
         style.configure("TLabel", background="#0f172a", foreground="#e2e8f0")
         style.configure("TEntry", fieldbackground="#ffffff")
@@ -144,7 +141,7 @@ class SeguridadTaller:
         frame.pack(fill="both", expand=True, padx=12, pady=12)
 
         title = tk.Label(frame, text="Módulo de Seguridad", bg="#0f172a", fg="#e2e8f0", font=("Segoe UI Semibold", 16))
-        title.grid(row=0, column=0, columnspan=4, sticky="w", pady=(0,10))
+        title.grid(row=0, column=0, columnspan=6, sticky="w", pady=(0,10))
 
         # Left: form para credenciales
         tk.Label(frame, text="Servicio:", bg="#0f172a", fg="#e2e8f0").grid(row=1, column=0, sticky="e", padx=6, pady=6)
@@ -157,39 +154,47 @@ class SeguridadTaller:
 
         tk.Label(frame, text="Contraseña:", bg="#0f172a", fg="#e2e8f0").grid(row=3, column=0, sticky="e", padx=6, pady=6)
         self.pw_var = tk.StringVar()
-        ttk.Entry(frame, textvariable=self.pw_var, width=30, show="*").grid(row=3, column=1, sticky="w")
+        # keep a reference to the entry so we can toggle show
+        self.pw_entry = ttk.Entry(frame, textvariable=self.pw_var, width=30, show="*")
+        self.pw_entry.grid(row=3, column=1, sticky="w")
 
         # Password tools
         ttk.Button(frame, text="Generar contraseña", style="Menu.TButton", command=self._on_generate_pw).grid(row=4, column=1, sticky="w", pady=(6,0))
         ttk.Button(frame, text="Mostrar fuerza", style="Menu.TButton", command=self._on_check_strength).grid(row=4, column=0, sticky="e", pady=(6,0))
 
+        # New: show toggle and copy button
+        self.show_pw_var = tk.BooleanVar(value=False)
+        chk = ttk.Checkbutton(frame, text="Mostrar contraseña", variable=self.show_pw_var, command=self._toggle_show_pw)
+        chk.grid(row=5, column=1, sticky="w", pady=(4,0))
+        ttk.Button(frame, text="Copiar contraseña", style="Menu.TButton", command=self._on_copy_password).grid(row=5, column=0, sticky="e", pady=(4,0))
+
         self.strength_lbl = tk.Label(frame, text="", bg="#0f172a", fg="#e2e8f0")
-        self.strength_lbl.grid(row=5, column=0, columnspan=2, sticky="w", pady=(4,12), padx=6)
+        self.strength_lbl.grid(row=6, column=0, columnspan=2, sticky="w", pady=(4,12), padx=6)
 
         # Buttons: guardar / limpiar
-        ttk.Button(frame, text="💾 Guardar credencial", style="Menu.TButton", command=self._on_save_cred).grid(row=6, column=0, pady=6)
-        ttk.Button(frame, text="🧹 Limpiar formulario", style="Menu.TButton", command=self._on_clear_form).grid(row=6, column=1, pady=6)
+        ttk.Button(frame, text="💾 Guardar credencial", style="Menu.TButton", command=self._on_save_cred).grid(row=7, column=0, pady=6)
+        ttk.Button(frame, text="🧹 Limpiar formulario", style="Menu.TButton", command=self._on_clear_form).grid(row=7, column=1, pady=6)
 
         # Right: listado de credenciales
         tk.Label(frame, text="Credenciales guardadas:", bg="#0f172a", fg="#e2e8f0").grid(row=1, column=2, sticky="w", padx=12)
         self.tree = ttk.Treeview(frame, columns=("service","user"), show="headings", height=12)
         self.tree.heading("service", text="Servicio")
         self.tree.heading("user", text="Usuario")
-        self.tree.grid(row=2, column=2, rowspan=5, columnspan=2, padx=(12,0), sticky="nsew")
+        self.tree.grid(row=2, column=2, rowspan=5, columnspan=3, padx=(12,0), sticky="nsew")
 
         # Scrollbar
         vsb = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview)
-        vsb.grid(row=2, column=4, rowspan=5, sticky="nsw")
+        vsb.grid(row=2, column=5, rowspan=5, sticky="nsw")
         self.tree.configure(yscrollcommand=vsb.set)
 
         # acciones sobre lista
-        ttk.Button(frame, text="🔍 Ver (desencriptar)", style="Menu.TButton", command=self._on_view_cred).grid(row=7, column=2, pady=8, sticky="w")
-        ttk.Button(frame, text="✏️ Modificar", style="Menu.TButton", command=self._on_load_selected).grid(row=7, column=3, pady=8, sticky="w")
-        ttk.Button(frame, text="🗑️ Eliminar", style="Menu.TButton", command=self._on_delete_selected).grid(row=7, column=4, pady=8, sticky="w")
+        ttk.Button(frame, text="🔍 Ver (desencriptar)", style="Menu.TButton", command=self._on_view_cred).grid(row=8, column=2, pady=8, sticky="w")
+        ttk.Button(frame, text="✏️ Modificar", style="Menu.TButton", command=self._on_load_selected).grid(row=8, column=3, pady=8, sticky="w")
+        ttk.Button(frame, text="🗑️ Eliminar", style="Menu.TButton", command=self._on_delete_selected).grid(row=8, column=4, pady=8, sticky="w")
 
         # Export / audit
-        ttk.Button(frame, text="📤 Exportar (CSV)", style="Menu.TButton", command=self._on_export_csv).grid(row=8, column=2, pady=6, sticky="w")
-        ttk.Button(frame, text="📘 Ver audit log", style="Menu.TButton", command=self._on_open_audit).grid(row=8, column=3, pady=6, sticky="w")
+        ttk.Button(frame, text="📤 Exportar (CSV)", style="Menu.TButton", command=self._on_export_csv).grid(row=9, column=2, pady=6, sticky="w")
+        ttk.Button(frame, text="📘 Ver audit log", style="Menu.TButton", command=self._on_open_audit).grid(row=9, column=3, pady=6, sticky="w")
 
         # configure resizing behaviour
         frame.grid_columnconfigure(2, weight=1)
@@ -207,6 +212,11 @@ class SeguridadTaller:
     def _on_generate_pw(self):
         pw = generate_password(16, symbols=True)
         self.pw_var.set(pw)
+        # optionally show it automatically if the user has checked to show passwords
+        if self.show_pw_var.get():
+            self.pw_entry.configure(show="")
+        else:
+            self.pw_entry.configure(show="*")
         self._on_check_strength()
         audit("generate_password", f"len={len(pw)}")
     
@@ -217,6 +227,25 @@ class SeguridadTaller:
         self.strength_lbl.config(text=f"Fuerza: {label}. {note_text}")
         audit("check_password_strength", f"score={score}")
 
+    def _toggle_show_pw(self):
+        if self.show_pw_var.get():
+            self.pw_entry.configure(show="")
+            audit("show_password_toggled", "shown")
+        else:
+            self.pw_entry.configure(show="*")
+            audit("show_password_toggled", "hidden")
+
+    def _on_copy_password(self):
+        pw = self.pw_var.get().strip()
+        if not pw:
+            messagebox.showwarning("Nada que copiar", "El campo Contraseña está vacío.")
+            return
+        # copiar al portapapeles
+        self.root.clipboard_clear()
+        self.root.clipboard_append(pw)
+        audit("copy_password", f"service={self.service_var.get()} user={self.user_var.get()}")
+        messagebox.showinfo("Copiado", "Contraseña copiada al portapapeles. Pégala en el destino y luego borra el portapapeles si lo deseas.")
+
     def _on_save_cred(self):
         service = self.service_var.get().strip()
         user = self.user_var.get().strip()
@@ -225,7 +254,6 @@ class SeguridadTaller:
             messagebox.showwarning("Validación", "Completa Servicio, Usuario y Contraseña.")
             return
         creds = load_creds()
-        # store as {service,user, password} — password stored in plain inside the JSON before encrypting whole file
         creds.append({"service": service, "user": user, "password": pw, "created_at": datetime.now().isoformat()})
         save_creds(creds)
         audit("save_credential", f"{service}|{user}")
@@ -255,7 +283,6 @@ class SeguridadTaller:
             messagebox.showerror("Error", "Índice inválido.")
             return
         c = creds[idx]
-        # mostrar en ventana (advertencia)
         audit("view_credential", f"{c.get('service')}|{c.get('user')}")
         top = tk.Toplevel(self.root)
         top.title("Ver credencial")
@@ -263,6 +290,7 @@ class SeguridadTaller:
         tk.Label(top, text=f"Servicio: {c.get('service')}", bg="#0f172a", fg="#e2e8f0").pack(anchor="w", padx=10, pady=4)
         tk.Label(top, text=f"Usuario: {c.get('user')}", bg="#0f172a", fg="#e2e8f0").pack(anchor="w", padx=10, pady=4)
         tk.Label(top, text=f"Contraseña: {c.get('password')}", bg="#0f172a", fg="#e2e8f0").pack(anchor="w", padx=10, pady=8)
+        tk.Button(top, text="Copiar contraseña", command=lambda: (self.root.clipboard_clear(), self.root.clipboard_append(c.get("password","")), audit("copy_password_from_view", f"{c.get('service')}"))).pack(pady=4)
         tk.Button(top, text="Cerrar", command=top.destroy).pack(pady=8)
 
     def _on_load_selected(self):
@@ -278,7 +306,6 @@ class SeguridadTaller:
         self.service_var.set(c.get("service",""))
         self.user_var.set(c.get("user",""))
         self.pw_var.set(c.get("password",""))
-        # remove the existing one so Save will add updated
         creds.pop(idx)
         save_creds(creds)
         audit("load_for_edit", f"{c.get('service')}|{c.get('user')}")
@@ -310,7 +337,6 @@ class SeguridadTaller:
         if not fname:
             return
         df = pd.DataFrame(creds)
-        # omit passwords on export by default? include them but warn user:
         if not messagebox.askyesno("Exportar", "¿Incluir contraseñas en el CSV exportado? (archivo no cifrado)"):
             df = df.drop(columns=["password"], errors="ignore")
         df.to_csv(fname, index=False, encoding="utf-8-sig")
@@ -322,7 +348,6 @@ class SeguridadTaller:
         if not os.path.exists(AUDIT_LOG):
             messagebox.showinfo("Audit log", "No hay registros de auditoría aún.")
             return
-        # abrir archivo en ventana simple
         with open(AUDIT_LOG, "r", encoding="utf-8") as f:
             data = f.read()
         top = tk.Toplevel(self.root)
@@ -332,12 +357,9 @@ class SeguridadTaller:
         txt.insert("1.0", data)
         txt.config(state="disabled")
 
-# -----------------------
-# Run standalone for testing
-# -----------------------
+
 if __name__ == "__main__":
     ensure_base_dir()
-    # ensure key exists
     _ = load_key()
     root = tk.Tk()
     app = SeguridadTaller(root)
