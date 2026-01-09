@@ -1,19 +1,24 @@
+# panel_inicio.py (actualizado para telemetría / session)
 import tkinter as tk
 from tkinter import ttk, messagebox
 from PIL import Image, ImageTk
 import subprocess, sys, os
 
+from security_core import module_opened, start_user_session, end_user_session, button_clicked
+
 class PanelInicio:
     def __init__(self, root):
         self.root = root
         self.root.title("Panel de Inicio - Taller Mecánico")
-        # ventana redimensionable
         self.root.geometry("800x500")
         self.root.minsize(700, 480)
         self.root.resizable(True, True)
 
         self._configurar_estilos()
         self._construir_layout()
+
+        # Register window close handler to end session
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _configurar_estilos(self):
         style = ttk.Style()
@@ -69,8 +74,7 @@ class PanelInicio:
         self.button_widgets = []
         for texto, archivo in self.botones_def:
             btn = ttk.Button(self.canvas, text=texto, style="Menu.TButton",
-                             command=lambda a=archivo: self.abrir_modulo(a))
-            # inicialmente colocamos en (0,0); se reposicionarán en el handler configure
+                             command=lambda a=archivo, t=texto: self.abrir_modulo(a, t))
             win_id = self.canvas.create_window(0, 0, window=btn, width=260, height=40)
             self.button_windows.append(win_id)
             self.button_widgets.append(btn)
@@ -82,11 +86,12 @@ class PanelInicio:
         self.root.update_idletasks()
         self._position_buttons(self.canvas.winfo_width(), self.canvas.winfo_height())
 
-    def abrir_modulo(self, archivo):
+    def abrir_modulo(self, archivo, texto):
         carpeta = os.path.dirname(os.path.abspath(__file__))
         ruta = os.path.join(carpeta, archivo)
+        module_opened(archivo, "opened_from_panel")
+        button_clicked("PanelInicio", texto, f"open:{archivo}")
         if not os.path.exists(ruta):
-            # Intentar también en la ruta base del proyecto
             posible = os.path.join(r"C:\RICHARD\RB\2025\Taller_mecánica", archivo)
             if os.path.exists(posible):
                 ruta = posible
@@ -102,29 +107,24 @@ class PanelInicio:
         w = event.width
         h = event.height
         # actualizar fondo escalado si existe
-        if self.bg_orig is not None and self.bg_id is not None:
+        if self.bg_orig is not None and getattr(self, "bg_id", None) is not None:
             try:
                 resized = self.bg_orig.resize((max(1, w), max(1, h)), Image.Resampling.LANCZOS)
                 self.bg_image = ImageTk.PhotoImage(resized)
                 self.canvas.itemconfig(self.bg_id, image=self.bg_image)
             except Exception:
                 pass
-
         # reposicionar botones
         self._position_buttons(w, h)
 
     def _position_buttons(self, w, h):
-        # colocamos los botones centrados horizontalmente y con separación vertical proporcional
         center_x = w // 2
-        # top margin y espacio entre botones adaptativos
         top_margin = int(max(60, h * 0.12))
         spacing = int(max(44, h * 0.08))
-        # si hay muchos botones, reducimos spacing
         n = len(self.button_windows)
         available_h = h - top_margin - 60
         if n * spacing > available_h:
             spacing = max(36, available_h // max(1, n))
-
         for idx, win_id in enumerate(self.button_windows):
             y = top_margin + idx * spacing
             try:
@@ -132,9 +132,14 @@ class PanelInicio:
             except Exception:
                 pass
 
+    def _on_close(self):
+        # log and then quit
+        end_user_session()
+        self.root.destroy()
 
 if __name__ == "__main__":
     root = tk.Tk()
+    start_user_session()  # register session at app start
     app = PanelInicio(root)
     root.mainloop()
 
