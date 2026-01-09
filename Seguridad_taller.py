@@ -1,11 +1,15 @@
+# seguridad_taller.py
 import os
 import json
+import threading
+import hashlib
+import base64
 from datetime import datetime
 import secrets
 import string
 
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, simpledialog
 
 from cryptography.fernet import Fernet
 import pandas as pd
@@ -14,6 +18,44 @@ BASE_DIR = r"C:\RICHARD\RB\2025\Taller_mecánica"
 KEY_FILE = os.path.join(BASE_DIR, "security.key")
 CREDS_FILE = os.path.join(BASE_DIR, "creds.json.enc")
 AUDIT_LOG = os.path.join(BASE_DIR, "security_audit.log")
+MASTER_FILE = os.path.join(BASE_DIR, "master_auth.json")  # for lightweight master-password check
+
+# -----------------------
+# Modern button component
+# -----------------------
+def _lighten(hex_color, factor=1.12):
+    hex_color = hex_color.lstrip('#')
+    r = int(hex_color[0:2], 16)
+    g = int(hex_color[2:4], 16)
+    b = int(hex_color[4:6], 16)
+    r = min(255, int(r * factor))
+    g = min(255, int(g * factor))
+    b = min(255, int(b * factor))
+    return '#{:02x}{:02x}{:02x}'.format(r, g, b)
+
+class ModernButton(tk.Button):
+    def __init__(self, master=None, text="", command=None, width=None, height=None, bg="#f59e0b", fg="#111827", font=("Segoe UI Semibold", 10), padx=10, pady=6, **kwargs):
+        hover = _lighten(bg, 1.12)
+        super().__init__(master,
+                         text=text,
+                         command=command,
+                         bg=bg,
+                         fg=fg,
+                         activebackground=hover,
+                         activeforeground=fg,
+                         bd=0,
+                         relief="flat",
+                         highlightthickness=0,
+                         cursor="hand2",
+                         font=font,
+                         padx=padx,
+                         pady=pady,
+                         **kwargs)
+        self._bg = bg
+        self._hover = hover
+        # hover effect
+        self.bind("<Enter>", lambda e: self.configure(bg=self._hover))
+        self.bind("<Leave>", lambda e: self.configure(bg=self._bg))
 
 # -----------------------
 # Utilities: key / crypto
@@ -51,6 +93,80 @@ def audit(action, details=""):
     ts = datetime.now().isoformat(sep=" ", timespec="seconds")
     with open(AUDIT_LOG, "a", encoding="utf-8") as f:
         f.write(f"{ts} | {action} | {details}\n")
+
+# -----------------------
+# Master-password helpers (lightweight, PBKDF2 verify only)
+# -----------------------
+PBKDF2_ITER = 200_000
+
+def master_exists():
+    return os.path.exists(MASTER_FILE)
+
+def create_master_password_interactive(parent):
+    ensure_base_dir()
+    # Ask for a new master password (twice)
+    p1 = simpledialog.askstring("Crear contraseña maestra", "Ingrese contraseña maestra:", show="*", parent=parent)
+    if not p1:
+        return False
+    p2 = simpledialog.askstring("Confirmar contraseña maestra", "Reingrese la contraseña maestra:", show="*", parent=parent)
+    if p1 != p2:
+        messagebox.showerror("Error", "Las contraseñas no coinciden.")
+        return False
+    salt = secrets.token_bytes(16)
+    dk = hashlib.pbkdf2_hmac("sha256", p1.encode("utf-8"), salt, PBKDF2_ITER)
+    data = {"salt": base64.b64encode(salt).decode("ascii"), "hash": base64.b64encode(dk).decode("ascii"), "iterations": PBKDF2_ITER}
+    with open(MASTER_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    audit("master_created", "")
+    messagebox.showinfo("Creada", "Contraseña maestra creada correctamente.")
+    return True
+
+def verify_master_password_interactive(parent, purpose="confirmar acción sensible"):
+    ensure_base_dir()
+    if not master_exists():
+        # Offer to create it
+        if messagebox.askyesno("Contraseña maestra no encontrada", "No existe una contraseña maestra. ¿Desea crear una ahora?"):
+            ok = create_master_password_interactive(parent)
+            if not ok:
+                return False
+        else:
+            return False
+
+    with open(MASTER_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    salt = base64.b64decode(data["salt"])
+    iterations = int(data.get("iterations", PBKDF2_ITER))
+    stored = base64.b64decode(data["hash"])
+
+    attempt = simpledialog.askstring("Contraseña maestra", f"Ingrese la contraseña maestra para {purpose}:", show="*", parent=parent)
+    if not attempt:
+        return False
+    dk = hashlib.pbkdf2_hmac("sha256", attempt.encode("utf-8"), salt, iterations)
+    if secrets.compare_digest(dk, stored):
+        audit("master_verified", purpose)
+        return True
+    else:
+        audit("master_failed", purpose)
+        messagebox.showerror("Error", "Contraseña maestra incorrecta.")
+        return False
+
+# -----------------------
+# Clipboard helper with auto-clear
+# -----------------------
+def copy_to_clipboard_then_clear(root, text, seconds=15):
+    root.clipboard_clear()
+    root.clipboard_append(text)
+    audit("copy_to_clipboard", f"len={len(text)}")
+    # start timer to clear clipboard
+    def clear():
+        try:
+            root.clipboard_clear()
+            audit("clipboard_cleared", "")
+        except Exception:
+            pass
+    t = threading.Timer(seconds, clear)
+    t.daemon = True
+    t.start()
 
 # -----------------------
 # Password helpers
@@ -131,8 +247,6 @@ class SeguridadTaller:
     def _setup_styles(self):
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure("Menu.TButton", background="#f59e0b", foreground="#111827", font=("Segoe UI Semibold", 11), padding=6)
-        style.map("Menu.TButton", background=[("active", "#fbbf24")])
         style.configure("TLabel", background="#0f172a", foreground="#e2e8f0")
         style.configure("TEntry", fieldbackground="#ffffff")
 
@@ -154,26 +268,25 @@ class SeguridadTaller:
 
         tk.Label(frame, text="Contraseña:", bg="#0f172a", fg="#e2e8f0").grid(row=3, column=0, sticky="e", padx=6, pady=6)
         self.pw_var = tk.StringVar()
-        # keep a reference to the entry so we can toggle show
         self.pw_entry = ttk.Entry(frame, textvariable=self.pw_var, width=30, show="*")
         self.pw_entry.grid(row=3, column=1, sticky="w")
 
         # Password tools
-        ttk.Button(frame, text="Generar contraseña", style="Menu.TButton", command=self._on_generate_pw).grid(row=4, column=1, sticky="w", pady=(6,0))
-        ttk.Button(frame, text="Mostrar fuerza", style="Menu.TButton", command=self._on_check_strength).grid(row=4, column=0, sticky="e", pady=(6,0))
+        ModernButton(frame, text="Generar contraseña", command=self._on_generate_pw).grid(row=4, column=1, sticky="w", pady=(6,0))
+        ModernButton(frame, text="Mostrar fuerza", command=self._on_check_strength).grid(row=4, column=0, sticky="e", pady=(6,0))
 
         # New: show toggle and copy button
         self.show_pw_var = tk.BooleanVar(value=False)
         chk = ttk.Checkbutton(frame, text="Mostrar contraseña", variable=self.show_pw_var, command=self._toggle_show_pw)
         chk.grid(row=5, column=1, sticky="w", pady=(4,0))
-        ttk.Button(frame, text="Copiar contraseña", style="Menu.TButton", command=self._on_copy_password).grid(row=5, column=0, sticky="e", pady=(4,0))
+        ModernButton(frame, text="Copiar contraseña", command=self._on_copy_password).grid(row=5, column=0, sticky="e", pady=(4,0))
 
         self.strength_lbl = tk.Label(frame, text="", bg="#0f172a", fg="#e2e8f0")
         self.strength_lbl.grid(row=6, column=0, columnspan=2, sticky="w", pady=(4,12), padx=6)
 
         # Buttons: guardar / limpiar
-        ttk.Button(frame, text="💾 Guardar credencial", style="Menu.TButton", command=self._on_save_cred).grid(row=7, column=0, pady=6)
-        ttk.Button(frame, text="🧹 Limpiar formulario", style="Menu.TButton", command=self._on_clear_form).grid(row=7, column=1, pady=6)
+        ModernButton(frame, text="💾 Guardar credencial", command=self._on_save_cred).grid(row=7, column=0, pady=6)
+        ModernButton(frame, text="🧹 Limpiar formulario", command=self._on_clear_form).grid(row=7, column=1, pady=6)
 
         # Right: listado de credenciales
         tk.Label(frame, text="Credenciales guardadas:", bg="#0f172a", fg="#e2e8f0").grid(row=1, column=2, sticky="w", padx=12)
@@ -188,13 +301,13 @@ class SeguridadTaller:
         self.tree.configure(yscrollcommand=vsb.set)
 
         # acciones sobre lista
-        ttk.Button(frame, text="🔍 Ver (desencriptar)", style="Menu.TButton", command=self._on_view_cred).grid(row=8, column=2, pady=8, sticky="w")
-        ttk.Button(frame, text="✏️ Modificar", style="Menu.TButton", command=self._on_load_selected).grid(row=8, column=3, pady=8, sticky="w")
-        ttk.Button(frame, text="🗑️ Eliminar", style="Menu.TButton", command=self._on_delete_selected).grid(row=8, column=4, pady=8, sticky="w")
+        ModernButton(frame, text="🔍 Ver (desencriptar)", command=self._on_view_cred).grid(row=8, column=2, pady=8, sticky="w")
+        ModernButton(frame, text="✏️ Modificar", command=self._on_load_selected).grid(row=8, column=3, pady=8, sticky="w")
+        ModernButton(frame, text="🗑️ Eliminar", command=self._on_delete_selected).grid(row=8, column=4, pady=8, sticky="w")
 
         # Export / audit
-        ttk.Button(frame, text="📤 Exportar (CSV)", style="Menu.TButton", command=self._on_export_csv).grid(row=9, column=2, pady=6, sticky="w")
-        ttk.Button(frame, text="📘 Ver audit log", style="Menu.TButton", command=self._on_open_audit).grid(row=9, column=3, pady=6, sticky="w")
+        ModernButton(frame, text="📤 Exportar (CSV)", command=self._on_export_csv).grid(row=9, column=2, pady=6, sticky="w")
+        ModernButton(frame, text="📘 Ver audit log", command=self._on_open_audit).grid(row=9, column=3, pady=6, sticky="w")
 
         # configure resizing behaviour
         frame.grid_columnconfigure(2, weight=1)
@@ -212,7 +325,6 @@ class SeguridadTaller:
     def _on_generate_pw(self):
         pw = generate_password(16, symbols=True)
         self.pw_var.set(pw)
-        # optionally show it automatically if the user has checked to show passwords
         if self.show_pw_var.get():
             self.pw_entry.configure(show="")
         else:
@@ -240,11 +352,8 @@ class SeguridadTaller:
         if not pw:
             messagebox.showwarning("Nada que copiar", "El campo Contraseña está vacío.")
             return
-        # copiar al portapapeles
-        self.root.clipboard_clear()
-        self.root.clipboard_append(pw)
-        audit("copy_password", f"service={self.service_var.get()} user={self.user_var.get()}")
-        messagebox.showinfo("Copiado", "Contraseña copiada al portapapeles. Pégala en el destino y luego borra el portapapeles si lo deseas.")
+        copy_to_clipboard_then_clear(self.root, pw, seconds=15)
+        messagebox.showinfo("Copiado", "Contraseña copiada al portapapeles (se limpiará automáticamente en 15s).")
 
     def _on_save_cred(self):
         service = self.service_var.get().strip()
@@ -274,6 +383,10 @@ class SeguridadTaller:
         return int(sel[0])
 
     def _on_view_cred(self):
+        # Require master password for viewing decrypted credentials (Option 2)
+        if not verify_master_password_interactive(self.root, "ver credencial"):
+            return
+
         idx = self._get_selected_index()
         if idx is None:
             messagebox.showwarning("Atención", "Selecciona una credencial para ver.")
@@ -290,8 +403,8 @@ class SeguridadTaller:
         tk.Label(top, text=f"Servicio: {c.get('service')}", bg="#0f172a", fg="#e2e8f0").pack(anchor="w", padx=10, pady=4)
         tk.Label(top, text=f"Usuario: {c.get('user')}", bg="#0f172a", fg="#e2e8f0").pack(anchor="w", padx=10, pady=4)
         tk.Label(top, text=f"Contraseña: {c.get('password')}", bg="#0f172a", fg="#e2e8f0").pack(anchor="w", padx=10, pady=8)
-        tk.Button(top, text="Copiar contraseña", command=lambda: (self.root.clipboard_clear(), self.root.clipboard_append(c.get("password","")), audit("copy_password_from_view", f"{c.get('service')}"))).pack(pady=4)
-        tk.Button(top, text="Cerrar", command=top.destroy).pack(pady=8)
+        ModernButton(top, text="Copiar contraseña", command=lambda: copy_to_clipboard_then_clear(self.root, c.get("password",""), seconds=15)).pack(pady=4)
+        ModernButton(top, text="Cerrar", command=top.destroy).pack(pady=8)
 
     def _on_load_selected(self):
         idx = self._get_selected_index()
@@ -312,11 +425,15 @@ class SeguridadTaller:
         self._load_list()
 
     def _on_delete_selected(self):
+        # Require master password for deletion
+        if not verify_master_password_interactive(self.root, "eliminar credencial"):
+            return
+
         idx = self._get_selected_index()
         if idx is None:
             messagebox.showwarning("Atención", "Selecciona una credencial para eliminar.")
             return
-        if not messagebox.askyesno("Confirmar", "¿Eliminar credencial seleccionada?"):
+        if not messagebox.askyesno("Confirmar", "Selecciona una credencial para eliminar. ¿Continuar?"):
             return
         creds = load_creds()
         if idx < 0 or idx >= len(creds):
@@ -329,6 +446,10 @@ class SeguridadTaller:
         self._load_list()
 
     def _on_export_csv(self):
+        # Require master password for exporting (because it can include secrets)
+        if not verify_master_password_interactive(self.root, "exportar credenciales"):
+            return
+
         creds = load_creds()
         if not creds:
             messagebox.showwarning("Sin datos", "No hay credenciales para exportar.")
@@ -337,6 +458,7 @@ class SeguridadTaller:
         if not fname:
             return
         df = pd.DataFrame(creds)
+        # omit passwords on export by default? prompt user
         if not messagebox.askyesno("Exportar", "¿Incluir contraseñas en el CSV exportado? (archivo no cifrado)"):
             df = df.drop(columns=["password"], errors="ignore")
         df.to_csv(fname, index=False, encoding="utf-8-sig")
@@ -360,6 +482,7 @@ class SeguridadTaller:
 
 if __name__ == "__main__":
     ensure_base_dir()
+    # ensure key exists
     _ = load_key()
     root = tk.Tk()
     app = SeguridadTaller(root)
